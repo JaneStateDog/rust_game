@@ -3,5 +3,5 @@
 use rust_game::run;
 
 fn main() {
-    run();
+    pollster::block_on(run());
 }
