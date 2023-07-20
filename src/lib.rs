@@ -9,6 +9,7 @@ struct State {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    clear_color: wgpu::Color,
     size: winit::dpi::PhysicalSize<u32>,
     window: Window,
 }
@@ -72,12 +73,15 @@ impl State {
         };
         surface.configure(&device, &config);
 
+        let clear_color = wgpu::Color::BLACK;
+
         Self {
             window,
             surface,
             device,
             queue,
             config,
+            clear_color,
             size,
         }
     }
@@ -96,7 +100,18 @@ impl State {
     }
 
     fn input(&mut self, event: &WindowEvent) -> bool {
-        false
+        match event {
+            WindowEvent::CursorMoved { position, .. } => {
+                self.clear_color = wgpu::Color {
+                    r: position.x as f64 / self.size.width as f64,
+                    g: position.y as f64 / self.size.height as f64,
+                    b: 1.0,
+                    a: 1.0,
+                };
+                true
+            },
+            _ => false,
+        }
     }
 
     fn update(&mut self) {
@@ -118,18 +133,16 @@ impl State {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1,
-                            g: 0.2,
-                            b: 0.3,
-                            a: 1.0,
-                        }),
+                        load: wgpu::LoadOp::Clear(self.clear_color),
                         store: true,
                     },
                 })],
                 depth_stencil_attachment: None,
             });
-        }
+        } 
+        // The reason this is in an extra block ({}) is because something something scope
+        // and we need rust to drop any variables within this block when the code leaves that scope
+        // thus releasing the mutable borrow on 'encoder' and allowing us to .finish() it.
 
         // Submit will accept anything that implements IntoIter.
         self.queue.submit(std::iter::once(encoder.finish()));
