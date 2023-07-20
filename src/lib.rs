@@ -12,6 +12,7 @@ struct State {
     clear_color: wgpu::Color,
     size: winit::dpi::PhysicalSize<u32>,
     window: Window,
+    render_pipeline: wgpu::RenderPipeline,
 }
 
 impl State {
@@ -75,6 +76,69 @@ impl State {
 
         let clear_color = wgpu::Color::BLACK;
 
+        let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
+        /* // This can also be written like this. But why would I do it this way, lmao?
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+        });
+        */
+
+        let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { 
+            label: Some("Render Pipeline Layout"),
+            bind_group_layouts: &[], 
+            push_constant_ranges: &[],
+        });
+
+        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Render Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "vs_main", // Specify which function inside the shader should be the "entry_point".
+                // The "entry_point"s are the functions we marked with @vertex and @fragment.
+                buffers: &[], // This field tells wgpu what type of vertices we want to pass to the vertex shader.
+                // We're specifying the vertices in the vertex shader itself, so we'll leave this empty.
+            },
+            fragment: Some(wgpu::FragmentState { 
+            // The fragment shader is technically optional, so we have to wrap it in "Some()".
+                module: &shader,
+                entry_point: "fs_main",
+                targets: &[Some(wgpu::ColorTargetState { // This tells wgpu what color outputs to set up.
+                    // Currently, we only need one for the surface. We use the surface's format so that copying
+                    // to it is easy, and we specify that the blending should just replace old pixel data with new data.
+                    // We also tell wgpu to write to all colors: red, blue, green, and alpha.
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState { 
+            // The primitive field describes how to interpret our vertices when converting them into triangles.
+                topology: wgpu::PrimitiveTopology::TriangleList, 
+                // ^ Using PrimitiveTopology::TriangleList means that every three vertices will correspond to one triangle.
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back), // The "front_face" and "cull_mode" fields tell wgpu 
+                // how to determine whether a given triangle is facing forward or not. 
+                // "FrontFace::Ccw" means that a triangle is facing forward if the vertices are arranged in a counter-clockwise direction.
+                // Triangles that are not considered facing forward are culled (not included in the render) as specified by CullMode::Back.
+                polygon_mode: wgpu::PolygonMode::Fill, // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
+                unclipped_depth: false, // Requires Features::DEPTH_CLIP_CONTROL
+                conservative: false, // Requires Features::CONSERVATIVE_RASTERIZATION
+            },
+            depth_stencil: None, // We're not using a depth/stencil buffer currently,
+            // so we leave this as None. We will change this later.
+            multisample: wgpu::MultisampleState {
+                count: 1, // This determines how many samples the pipeline will use.
+                // Multisampling is a complex topic, soooooo uhhhh *shrugs*
+                mask: !0, // This specifies which samples should be active. In this case, we're using all of them.
+                alpha_to_coverage_enabled: false, // This has to do with anti-aliasing. So, same as count, uhhhh *shrugs*
+            },
+            multiview: None, // This indicates how many array layers the render attachments can have.
+            // We won't be rendering to array textures so we can set this to None.
+        });
+
         Self {
             window,
             surface,
@@ -83,6 +147,7 @@ impl State {
             config,
             clear_color,
             size,
+            render_pipeline,
         }
     }
 
@@ -127,22 +192,29 @@ impl State {
         });
 
         {
-            let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(self.clear_color),
-                        store: true,
-                    },
-                })],
+                color_attachments: &[
+                    // This is what @location(0) in the fragment shader targets
+                    Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(self.clear_color),
+                            store: true,
+                        },
+                    })
+                ],
                 depth_stencil_attachment: None,
             });
+
+            render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.draw(0..3, 0..1); // We'll tell wgpu to draw somethign with 3 vertices and 1 instance
+            // This is where @builtin(vertex_index) comes from.
         } 
-        // The reason this is in an extra block ({}) is because something something scope
+        // The reason this is in an extra block ("{}") is because something something scope
         // and we need rust to drop any variables within this block when the code leaves that scope
-        // thus releasing the mutable borrow on 'encoder' and allowing us to .finish() it.
+        // thus releasing the mutable borrow on "encoder" and allowing us to ".finish()" it.
 
         // Submit will accept anything that implements IntoIter.
         self.queue.submit(std::iter::once(encoder.finish()));
