@@ -1,8 +1,94 @@
+use wgpu::util::DeviceExt;
 use winit::{
     event::*,
     event_loop::{ControlFlow, EventLoop},
     window::{Window, WindowBuilder}
 };
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)] 
+// The struct needs to be "Copy" so we can create a buffer with it
+// Pod indicates that our Vertex is "Plain Old Data" and thus can be interpreted as a "&[u8]".
+// Zeroable indicates that we can use std::mem::zeroed().
+struct Vertex {
+    position: [f32; 3], // X, Y, Z
+    color: [f32; 3], // R, G, B
+}
+
+impl Vertex {
+    const ATTRIBS: [wgpu::VertexAttribute; 2] =
+        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
+
+    fn desc() -> wgpu::VertexBufferLayout<'static> {
+        /* // This way of of specifying the attributes is quite verbose.
+        // We can use a different method (like we did below) to do it much cleaner.
+        // I'm just keeping this here for note-taking-reasons
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+            // This defines how wide a vertex is. When the shader goes to read the
+            // next vertex, it will skip over "array_stride" number of bytes. In our case, "array_stride"
+            // will probably be 24 bytes.
+            step_mode: wgpu::VertexStepMode::Vertex,
+            // This tells the pipeline whether each element of the array in this buffer represents
+            // per-vertex data or per-instance data. We can specify "wgpu::VertexStepMode::Instance"
+            // if we only want to change vertices when we start drawing a new instance.
+            attributes: &[ // This describes the individual parts of the vertex.
+            // Generally, this is a 1:1 mapping with a struct's fields, which is true in our case.
+                wgpu::VertexAttribute {
+                    offset: 0, // This defines the offset in bytes until the attribute starts.
+                    // For the first attribute, the offset is usually zero. For any later attributes,
+                    // the offset is the sum over "size_of" of the previous attributes' data.
+                    shader_location: 0, // This tells the shader what location to store this attribute at.
+                    // For example "@location(0) x: vec3<f32>" in the vertex shader would correspond to the
+                    // position field of the "Vertex" struct, while "@location(1) x: vec3<f32>" would be the color field.
+                    format: wgpu::VertexFormat::Float32x3, // This tells the shader the shape of the attribute.
+                    // "Float32x3" corresponds to "vec3<f32>" in shader code. The max value we can store in
+                    // an attribute is "Float32x4" ("Uint32x4" and "Sint32x4" work as well.) We'll keep this in
+                    // mind for when we have to store things that are bigger than "Float32x4".
+                },
+                wgpu::VertexAttribute {
+                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+            ]
+        } 
+        */
+
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &Self::ATTRIBS,
+        }
+    }
+}
+
+// We've got cooler vertices now *puts on sunglasses*
+/*
+const VERTICES: &[Vertex] = &[ // We arrange the vertices in counter-clockwise order:
+// top, bottom left, bottom right. We do it this way partially out of tradition, but mostly
+// because we specified in the "primitive" of the "render_pipeline" that we want the
+// "front_face" of our triangle to be "wgpu::FrontFace::Ccw" so that we cull the back face.
+// This means that any triangle that should be facing us should have its vertices in counter-clockwise order.
+    Vertex { position: [0.0, 0.5, 0.0], color: [1.0, 0.0, 0.0] },
+    Vertex { position: [-0.5, -0.5, 0.0], color: [0.0, 1.0, 0.0] },
+    Vertex { position: [0.5, -0.5, 0.0], color: [0.0, 0.0, 1.0] },
+];
+*/
+
+const VERTICES: &[Vertex] = &[
+    Vertex { position: [-0.0868241, 0.49240386, 0.0], color: [0.5, 0.0, 0.5] }, // A
+    Vertex { position: [-0.49513406, 0.06958647, 0.0], color: [0.5, 0.0, 0.5] }, // B
+    Vertex { position: [-0.21918549, -0.44939706, 0.0], color: [0.5, 0.0, 0.5] }, // C
+    Vertex { position: [0.35966998, -0.3473291, 0.0], color: [0.5, 0.0, 0.5] }, // D
+    Vertex { position: [0.44147372, 0.2347359, 0.0], color: [0.5, 0.0, 0.5] }, // E
+];
+
+const INDICES: &[u16] = &[
+    0, 1, 4,
+    1, 2, 4,
+    2, 3, 4
+];
 
 struct State {
     surface: wgpu::Surface,
@@ -15,6 +101,9 @@ struct State {
     render_pipeline: wgpu::RenderPipeline,
     challenge_render_pipeline: wgpu::RenderPipeline,
     use_color: bool,
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    num_indices: u32,
 }
 
 impl State {
@@ -96,8 +185,9 @@ impl State {
                 module: &shader,
                 entry_point: "vs_main", // Specify which function inside the shader should be the "entry_point".
                 // The "entry_point"s are the functions we marked with @vertex and @fragment.
-                buffers: &[], // This field tells wgpu what type of vertices we want to pass to the vertex shader.
-                // We're specifying the vertices in the vertex shader itself, so we'll leave this empty.
+                buffers: &[
+                    Vertex::desc(),
+                ], // This field tells wgpu what type of vertices we want to pass to the vertex shader.
             },
             fragment: Some(wgpu::FragmentState { 
             // The fragment shader is technically optional, so we have to wrap it in "Some()".
@@ -180,6 +270,24 @@ impl State {
 
         let use_color = true;
 
+        let vertex_buffer = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Vertex Buffer"),
+                contents: bytemuck::cast_slice(VERTICES),
+                usage: wgpu::BufferUsages::VERTEX,
+            }
+        );
+
+        let index_buffer = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Index Buffer"),
+                contents: bytemuck::cast_slice(INDICES),
+                usage: wgpu::BufferUsages::INDEX,
+            }
+        );
+
+        let num_indices = INDICES.len() as u32;
+
         Self {
             window,
             surface,
@@ -191,6 +299,9 @@ impl State {
             render_pipeline,
             challenge_render_pipeline,
             use_color,
+            vertex_buffer,
+            index_buffer,
+            num_indices,
         }
     }
 
@@ -267,8 +378,20 @@ impl State {
             } else {
                 &self.challenge_render_pipeline
             });
-            render_pass.draw(0..3, 0..1); // We'll tell wgpu to draw somethign with 3 vertices and 1 instance
-            // This is where @builtin(vertex_index) comes from.
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..)); // This takes two parameters.
+            // The first is what buffer slot to use for this vertex buffer (you can have multiple vertex buffers at the same time.)
+            // The second is the slice of the buffer to use. You can store as many objects in a buffer as your hardware allows,
+            // so "slice" allows us to specify which portion of the buffer to use. We use ".." to specify the entire buffer.
+            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            
+            if self.use_color {
+                render_pass.draw_indexed(0..self.num_indices, 0, 0..1); // When using an index buffer, we need to use "draw_indexed" instead of just "draw".
+                // The "draw" method ignores the index buffer. Also make sure you use the number of indices ("num_indices"),
+                // not vertices as your model will either draw wrong, or the method will "panic" becasuse there are not enough indices.
+            } else {
+                render_pass.draw(0..self.num_indices, 0..1); // We'll tell wgpu to draw something with our number of vertices and 1 instance
+                // This is where @builtin(vertex_index) comes from.
+            }
         } 
         // The reason this is in an extra block ("{}") is because something something scope
         // and we need rust to drop any variables within this block when the code leaves that scope
