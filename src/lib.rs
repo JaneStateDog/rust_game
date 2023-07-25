@@ -165,6 +165,62 @@ impl State {
         };
         surface.configure(&device, &config);
 
+        let diffuse_bytes = include_bytes!("happy-tree.png");
+        let diffuse_image = image::load_from_memory(diffuse_bytes).unwrap();
+        let diffuse_rgba = diffuse_image.to_rgba8();
+
+        use image::GenericImageView;
+        let dimensions = diffuse_image.dimensions();
+        // Here we get the bytes of our image file, load them into an image, which is
+        // then converted into a "Vec" of rgba bytes. We also save the image's dimensions
+        // for when we create the actual "Texture".
+
+        let texture_size = wgpu::Extent3d {
+            width: dimensions.0,
+            height: dimensions.1,
+            depth_or_array_layers: 1,
+        };
+        let diffuse_texture = device.create_texture(
+            &wgpu::TextureDescriptor {
+                // All textures are stored as 3D, we represent our 2D texture
+                // by setting depth to 1.
+                size: texture_size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                // Most images are stored using sRGB so we need to reflect that here.
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                // TEXTURE_BINDING tells wgpu that we want to use this texture in shaders.
+                // COPY_DST means that we want to copy data to this texture.
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                label: Some("diffuse_texture"),
+                // This is the same as with the SurfaceConfig. It specifies what
+                // texture formats can be used to create TextureViews for this texture.
+                // The base texture format (Rgba8UnormSrgb in this case) is always supported.
+                // Note that using a different texture format is not supported on the WebGL2 backend.
+                view_formats: &[],
+            }
+        );
+
+        queue.write_texture(
+            // Tells wgpu where to copy the pixel data
+            wgpu::ImageCopyTexture {
+                texture: &diffuse_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            // The actual pixel data
+            &diffuse_rgba,
+            // The layout of the texture
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * dimensions.0),
+                rows_per_image: Some(dimensions.1),
+            },
+            texture_size,
+        );
+
         let clear_color = wgpu::Color::BLACK;
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
